@@ -44,7 +44,7 @@ commands:
             then
               cd ~/project/backend
               npm install
-              npm run migration:revert 
+              npm run migration:revert                           
             fi
 jobs:
   build-frontend:
@@ -178,8 +178,8 @@ jobs:
           paths:
             - project/.circleci/ansible/inventory.txt
       # Here's where you will add some code to rollback on failure
-      - destroy-environment
-      - delete-s3-bucket
+      # - destroy-environment
+      # - delete-s3-bucket
 
 workflows:
   default:
