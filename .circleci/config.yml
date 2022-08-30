@@ -2,31 +2,31 @@ version: 2.1
 commands:
   destroy-environment:
     description: Destroy back-end and front-end cloudformation stacks given a workflow ID.
-    # parameters:
-    #   when_to_run:
-    #     type: string
-    #     default: "on_fail"   
+    parameters:
+      when_to_run:
+        type: string
+        default: "on_fail"   
     steps:
       - run:
           name: Destroy environments
-          when: on_fail
+          when:  << parameters.when_to_run >>
           command: |
             aws cloudformation delete-stack --stack-name udapeople-backend-${CIRCLE_WORKFLOW_ID:0:7}
             aws cloudformation delete-stack --stack-name udapeople-frontend-${CIRCLE_WORKFLOW_ID:0:7}
 
             
-  # delete-s3-bucket:
-  #   description: Destroy the s3 bucket of the frontend given a workflow ID
-  #   parameters:
-  #     when_to_run:
-  #       type: string
-  #       dafault: "on_fail"
-  #   steps:
-  #     - run:
-  #         name: Destroy S3 bucket
-  #         when: << parameters.when_to_run >>
-  #         command: | 
-  #           aws s3 rb s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --force
+  delete-s3-bucket:
+    description: Destroy the s3 bucket of the frontend given a workflow ID
+    parameters:
+      when_to_run:
+        type: string
+        dafault: "on_fail"
+    steps:
+      - run:
+          name: Destroy S3 bucket
+          when: << parameters.when_to_run >>
+          command: | 
+            aws s3 rb s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --force
 
   # revert-migrations:
   #   description: Revert the last migration if successfully run in the current workflow.
@@ -140,7 +140,7 @@ jobs:
             npm audit --audit-level=critical
   deploy-infrastructure:
     docker:
-      image: amazon/aws-cli
+      - image: amazon/aws-cli
     steps:
       - checkout
       - run:
@@ -178,8 +178,8 @@ jobs:
           paths:
             - project/.circleci/ansible/inventory.txt
       # Here's where you will add some code to rollback on failure
-      # - destroy-environment
-      # - delete-s3-bucket
+      - destroy-environment
+      - delete-s3-bucket
 
 workflows:
   default:
