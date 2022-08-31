@@ -28,24 +28,24 @@ commands:
           command: | 
             aws s3 rb s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --force
 
-  # revert-migrations:
-  #   description: Revert the last migration if successfully run in the current workflow.
+  revert-migrations:
+    description: Revert the last migration if successfully run in the current workflow.
        
-  #   steps:
-  #     - run:
-  #         name: Revert migrations
-  #         when: on_fail
-  #         command: |
-  #           # Curl command here to see if there was a successful migration associated with the workflow id, store result in SUCCESS variable
-  #           # Your Memstash or kvdb.io GET URL code goes here.
-  #           SUCCESS =$(curl --insecure https://kvdb.io/TVxQTdH4daVgyD7GXQoKPn/migration_${CIRCLE_WORKFLOW_ID:0:7})
-  #           # logic for reverting the database state.
-  #           if(( $SUCCESS==1 )); 
-  #           then
-  #             cd ~/project/backend
-  #             npm install
-  #             npm run migration:revert                           
-  #           fi
+    steps:
+      - run:
+          name: Revert migrations
+          when: on_fail
+          command: |
+            # Curl command here to see if there was a successful migration associated with the workflow id, store result in SUCCESS variable
+            # Your Memstash or kvdb.io GET URL code goes here.
+            SUCCESS =$(curl --insecure https://kvdb.io/KittzrWFeVZXKu2cTJZV6a/migration_${CIRCLE_WORKFLOW_ID:0:7})
+            # logic for reverting the database state.
+            if(( $SUCCESS==1 )); 
+            then
+              cd ~/project/backend
+              npm install
+              npm run migration:revert                           
+            fi
 jobs:
   build-frontend:
     docker:
@@ -180,6 +180,172 @@ jobs:
       # Here's where you will add some code to rollback on failure
       - destroy-environment
       - delete-s3-bucket
+  configure-infrastructure:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: ["40:fd:27:e4:63:f8:8b:21:ff:8a:2d:a2:dd:42:01:9a"]
+      -  attach workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update curl gzip ansible tar nodejs npm openssh-client git 
+            pip install awscli
+            
+      - run:
+          name: Configure server
+          command: |
+            cd .circleci/ansible
+            ansible-playbook configure-server.yml -i inventory.txt
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project/backend
+      - destroy-environment
+      - delete-s3-bucket      
+      # Here's where you will add some code to rollback on failure 
+  run-migrations:
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - run:
+          name: Run migrations
+          command: |
+            cd backend
+            npm install
+            npm run migrations > migratins_dump.txt
+            cat migrations_dump.txt
+            
+      - run:
+          name: Send migration results to memstash
+          command: |
+            if grep -q "has been executed successfully." ~/project/backend/migrations_dump.txt
+            then
+              curl --insecure https://kvdb.oi/KittzrWFeVZXKu2cTJZV6a/migration_${CIRCLE_WORKFLOW_ID:0:7} -D '1'
+            fi
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project/backend
+      - destroy-environment
+      - delete-s3-bucket
+     # Here's where you will add some code to rollback on failure 
+  deploy-frontend:
+    docker:
+      - image: python:3.7-alpine3.11
+    steps:
+      checkout
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update curl ansible tar gzip nodejs npm openssh-client git
+            pip install awscli
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Get backend url
+          command: |
+            export BACKEND_IP=$(AWS ec2 describe-instances \
+                    --query 'Reservations[*].Instances[*].PublicIpAddress' \
+                      --filters "Name=tag:project,Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+                      --output text
+                      )
+            export API_URL="http://${BACKEND_IP}:3030"
+            echo "${API_URL}"
+            echo API_URL="http://${BACKEND_IP}:3030" >> frontend/.env
+            cat frontend/.env
+      - run:
+          name: Deploy frontend objects
+          command: |
+            cd frontend
+            npm install
+            npm run build
+            tar -czvf artifact-"${CIRCLE_WORKFLOW_ID:0:7}".tar.gz dist
+            aws s3 cp dist s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive
+      - destroy-environment
+      - delete-s3-bucket
+      # Here's where you will add some code to rollback on failure
+  deploy-backend:
+    docker:
+      - image: python:3.7-alpine3.11 
+    steps:
+      checkout
+      - add_ssh_keys:
+          fingerprints: ["40:fd:27:e4:63:f8:8b:21:ff:8a:2d:a2:dd:42:01:9a"]
+      -  attach workspace:
+          at: ~/
+      
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update curl ansible tar gzip nodejs npm openssh-client git
+            pip install awscli
+      - run:
+          name: Deploy backend
+          command: |
+            cd backend
+            npm i
+            npm run build
+            cd ..
+            # Zip the directory
+            tar -C backend -czvf artifact.tar.gz .
+            pwd
+            mkdir .circleci/ansible/roles/deploy/files/
+            mv artifact.tar.gz .circleci/ansible/roles/deploy/files/
+            ls -lh
+            cd .circleci/ansible
+            echo "contents of the inventory.txt file is -------"
+            cat inventory.txt
+            ansible-playbook -i inventory.txt deploy-backend.yml
+      - destroy-environment
+      - delete-s3-bucket
+      
+      # Here's where you will add some code to rollback on failure  
+      smoke-test:
+    docker:
+      - image: python:3.7-alpine3.11 
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update curl ansible tar gzip nodejs npm openssh-client git
+            pip install awscli
+      
+      - run:
+          name: Backend smoke test.
+          command: |
+            export BACKEND_IP=$(AWS ec2 describe-instances \
+                    --query 'Reservations[*].Instances[*].PublicIpAddress' \
+                    --filters "Name=tag:project,Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+                    --output text)
+            export API_URL="http://${BACKEND_IP}:3030"
+            if curl "${API_URL}/api/status" | grep "ok"
+            then
+                exit 0
+            else
+                exit 1
+            fi
+      - run:
+          name: Frontend smoke test.
+          command: |
+            URL="http://udapeople-${CIRCLE_WORKFLOW_ID:0:7}.s3-website-us-east-1.amazonaws.com/#/employees"
+            echo ${URL}
+            if curl -s ${URL} | grep "Welcome"
+            then
+              exit 1
+            else
+              exit 1
+            fi
+      - destroy-environment
+      - revert-migrations
+      - delete-s3-bucket
+      # Here's where you will add some code to rollback on failure             
+
 
 workflows:
   default:
@@ -196,4 +362,14 @@ workflows:
           requires: [build-backend]
       - deploy-infrastructure:
           requires: [test-frontend, test-backend, scan-frontend, scan-backend]
+      - configure-infrastructure:
+          requires: [deploy-infrastructure]
+      - run-migrations:
+          requires: [configure-infrastructure]
+      - deploy-frontend:
+          requires: [run-migrations]
+      - deploy-backend:
+          requires: [run-migrations]
+      - smoke-test:
+          requires: [deploy-backend, deploy-frontend]
           
